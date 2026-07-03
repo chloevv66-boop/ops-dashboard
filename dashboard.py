@@ -5712,7 +5712,11 @@ def _write_commission_safe(client, new_df, table, source_files):
     保留其他月份不动、刷新上传的月份；写回前校验「其他月份行数不变」防掉数据。返回写入总行数。"""
     import pandas as pd
     new_months = set(new_df['佣金月份'].dropna().astype(str)) if '佣金月份' in new_df.columns else set()
-    existing = client.query(f"SELECT * FROM `{BQ_PREFIX}.{table}`").result().to_dataframe()
+    # 第一次上传佣金表时，旧表可能不存在；视为空表，直接建立。
+    try:
+        existing = client.query(f"SELECT * FROM `{BQ_PREFIX}.{table}`").result().to_dataframe()
+    except Exception:
+        existing = pd.DataFrame()
     if '佣金月份' in existing.columns and new_months:
         keep = existing[~existing['佣金月份'].astype(str).isin(new_months)]
     else:
@@ -5757,7 +5761,12 @@ def _replace_by_snapshot_month(client, new_df, table, source_file):
     返回 (months_str, updated, added, total)。"""
     months = (set(new_df['_snapshot_month'].dropna().astype(str))
               if '_snapshot_month' in new_df.columns else set())
-    existing = client.query(f"SELECT * FROM `{BQ_PREFIX}.{table}`").result().to_dataframe()
+    # 第一次上传 raw_member_report / raw_top_report 时，BigQuery 表可能还不存在。
+    # 不应该因为先 SELECT 旧表而 404，中止写入；表不存在就视为旧表为空。
+    try:
+        existing = client.query(f"SELECT * FROM `{BQ_PREFIX}.{table}`").result().to_dataframe()
+    except Exception:
+        existing = pd.DataFrame()
     has_acct = '会员账号' in existing.columns and '会员账号' in new_df.columns
     has_agent = has_acct and '代理' in existing.columns and '代理' in new_df.columns
 
@@ -5919,7 +5928,10 @@ def _bq_periods(client, table: str):
 def _bq_delete_periods(client, table: str, key: str, periods):
     """真删：读现有→去掉指定期间→TRUNCATE 写回。返回 (removed, remaining)。"""
     periods = set(str(p) for p in periods)
-    existing = client.query(f"SELECT * FROM `{BQ_PREFIX}.{table}`").result().to_dataframe()
+    try:
+        existing = client.query(f"SELECT * FROM `{BQ_PREFIX}.{table}`").result().to_dataframe()
+    except Exception:
+        existing = pd.DataFrame()
     if key not in existing.columns:
         return 0, len(existing)
     mask = existing[key].astype(str).isin(periods)
